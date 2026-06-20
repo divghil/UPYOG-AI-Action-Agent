@@ -1,0 +1,26 @@
+tools:
+  getDemoStatus:
+    description: "Get the current system status and active module list of the Upyog AI Action-Agent."
+    method: GET
+    url: "{API_BASE}/demo/status"
+    inputs:
+      tenantId: { type: string, source: session }
+      userName: { type: string, ask: "What is your user name?" }
+    returns: "JSON object containing system state, active modules, and timestamp"
+    mutating: false
+
+  triggerFakeBooking:
+    description: "Book a test resource. This is a mutating action and requires user confirmation."
+    method: POST
+    url: "{API_BASE}/demo/book"
+    inputs:
+      tenantId: { type: string, source: session }
+      demoId: { type: string, ask: "What is the demo ID you want to book?" }
+    returns: "JSON object containing booking details and reference code"
+    mutating: true
+
+workflow:
+  goal: "Test and verify the AI Action-Agent loop with demo status check and fake booking execution"
+  steps:
+    - getDemoStatus
+    - triggerFakeBooking

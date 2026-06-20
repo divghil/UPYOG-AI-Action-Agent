@@ -1,0 +1,216 @@
+import json
+import logging
+from typing import Dict, Any, Optional, Tuple
+from app.llm.base import LLMProvider
+from app.tools.registry import ToolRegistry
+from app.tools.executor import ToolExecutor
+from app.session.store import SessionState
+
+logger = logging.getLogger(__name__)
+
+class AgentOrchestrator:
+    def __init__(
+        self, 
+        llm_provider: LLMProvider, 
+        tool_registry: ToolRegistry, 
+        tool_executor: ToolExecutor
+    ):
+        self.llm_provider = llm_provider
+        self.tool_registry = tool_registry
+        self.tool_executor = tool_executor
+
+    async def run(
+        self, 
+        state: SessionState, 
+        user_message: str, 
+        token: Optional[str] = None
+    ) -> Tuple[str, str]:
+        """
+        Runs a single turn of the agent conversation loop.
+        Returns a tuple of (assistant_response_text, execution_status).
+        """
+        if not state.active_workflow:
+            state.active_workflow = "demo"
+
+        workflow_spec = self.tool_registry.get_workflow_spec(state.active_workflow)
+        if not workflow_spec:
+            logger.error(f"Workflow specification not found for module: {state.active_workflow}")
+            return f"Workflow '{state.active_workflow}' is not registered.", "error"
+
+        # 1. Handle Awaiting Confirmation Gate
+        if state.pending_mutating_tool:
+            clean_msg = user_message.strip().lower()
+            pending_tool = state.pending_mutating_tool
+            tool_name = pending_tool["name"]
+            
+            # Simple confirmation detection (covers English and Hindi)
+            is_confirmed = any(word in clean_msg for word in ["yes", "confirm", "proceed", "y", "haan", "theek"])
+            is_rejected = any(word in clean_msg for word in ["no", "cancel", "decline", "n", "nahi", "rehne"])
+
+            if is_confirmed:
+                logger.info(f"User confirmed mutating tool: {tool_name}")
+                # Mark as confirmed in session and retrieve specification
+                state.confirmed_actions[tool_name] = True
+                state.pending_mutating_tool = None
+                
+                tool_spec, _ = self.tool_registry.get_tool_spec(tool_name)
+                if not tool_spec:
+                    return f"Error: Tool '{tool_name}' no longer registered.", "error"
+                
+                # Execute the tool
+                tool_result = await self.tool_executor.execute(
+                    tool_spec, 
+                    pending_tool["arguments"], 
+                    state.collected_fields, 
+                    token
+                )
+                
+                # Append tool call and result to history to resume LLM reasoning
+                state.history.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": pending_tool["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(pending_tool["arguments"])
+                        }
+                    }]
+                })
+                state.history.append({
+                    "role": "tool",
+                    "tool_call_id": pending_tool["id"],
+                    "name": tool_name,
+                    "content": json.dumps(tool_result)
+                })
+                # Fall through to the LLM loop to formulate response based on tool execution result
+            elif is_rejected:
+                logger.info(f"User cancelled mutating tool: {tool_name}")
+                state.pending_mutating_tool = None
+                cancel_text = f"Action cancelled. What would you like to do instead?"
+                state.history.append({"role": "user", "content": user_message})
+                state.history.append({"role": "assistant", "content": cancel_text})
+                return cancel_text, "active"
+            else:
+                prompt_again = f"I am waiting for your confirmation. Please reply with 'yes' to proceed with the action or 'no' to cancel."
+                return prompt_again, "awaiting_confirmation"
+        else:
+            # Append new user message to conversation history
+            state.history.append({"role": "user", "content": user_message})
+
+        # 2. Core Tool Loop (Ask LLM -> Execute Non-Mutating Tools -> Repeat)
+        loop_count = 0
+        max_loops = 5
+        
+        while loop_count < max_loops:
+            loop_count += 1
+            
+            # Fetch Groq compatible function schemas
+            tools_schemas = self.tool_registry.get_all_tool_schemas_for_llm()
+            
+            # Build system prompt injecting workflow rules and gathered fields
+            system_prompt = (
+                f"You are the Upyog AI Action-Agent. Your current goal is: '{workflow_spec.goal}'.\n\n"
+                f"You must guide the user step-by-step through these steps:\n"
+                f"{chr(10).join([f'- {step}' for step in workflow_spec.steps])}\n\n"
+                f"Current collected variables from the user: {state.collected_fields}\n\n"
+                f"STRICT RULES:\n"
+                f"1. Check if the next step in the workflow requires executing a tool.\n"
+                f"2. If all required arguments for a tool are in 'collected variables', call the tool immediately.\n"
+                f"3. DO NOT guess, mock, or hallucinate parameter values. If a tool requires arguments that are NOT "
+                f"present in the 'collected variables', ask the user to provide them.\n"
+                f"4. Once a tool has returned its execution result, explain the outcome to the user and proceed to the next step.\n"
+            )
+            
+            messages = [{"role": "system", "content": system_prompt}]
+            messages.extend(state.history)
+
+            # Get response from the swappable LLM provider
+            llm_response = await self.llm_provider.chat(messages, tools=tools_schemas)
+
+            # If LLM triggered a tool call
+            if llm_response.tool_calls:
+                tc = llm_response.tool_calls[0]
+                tool_name = tc.name
+                tool_spec, _ = self.tool_registry.get_tool_spec(tool_name)
+
+                if not tool_spec:
+                    logger.warning(f"LLM called unregistered tool: {tool_name}")
+                    state.history.append({
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tool_name, "arguments": json.dumps(tc.arguments)}
+                        }]
+                    })
+                    state.history.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "name": tool_name,
+                        "content": json.dumps({"error": f"Tool '{tool_name}' is not registered."})
+                    })
+                    continue
+
+                # Enforce Confirmation Gate for Mutating actions
+                if tool_spec.mutating:
+                    is_confirmed = state.confirmed_actions.get(tool_name, False)
+                    if not is_confirmed:
+                        # Save pending tool call and pause execution to prompt user
+                        state.pending_mutating_tool = {
+                            "id": tc.id,
+                            "name": tool_name,
+                            "arguments": tc.arguments
+                        }
+                        
+                        # Format confirmation question based on tool inputs
+                        confirm_text = f"Confirm: Do you want to proceed with executing '{tool_name}'? (yes/no)"
+                        state.history.append({
+                            "role": "assistant",
+                            "content": confirm_text
+                        })
+                        return confirm_text, "awaiting_confirmation"
+
+                # Update collected fields with parsed tool arguments
+                state.collected_fields.update(tc.arguments)
+
+                # Execute the tool
+                tool_result = await self.tool_executor.execute(
+                    tool_spec, 
+                    tc.arguments, 
+                    state.collected_fields, 
+                    token
+                )
+
+                # Append tool call and result to history
+                state.history.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": json.dumps(tc.arguments)}
+                    }]
+                })
+                state.history.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "name": tool_name,
+                    "content": json.dumps(tool_result)
+                })
+
+                # Clear confirmation flag after use
+                state.confirmed_actions[tool_name] = False
+                
+                # Loop back to LLM to formulate response based on tool output
+                continue
+
+            else:
+                # LLM returned text (e.g., asking user a question or final summary)
+                assistant_text = llm_response.text or "I am processing your request."
+                state.history.append({"role": "assistant", "content": assistant_text})
+                return assistant_text, "active"
+
+        return "Loop execution limit reached without formulating a response.", "error"
