@@ -13,7 +13,7 @@ It demonstrates:
 
 ## 1. Setup Instructions
 
-The service is pre-configured to use the existing Groq API key found in your voicebot workspace.
+The service is pre-configured to use the existing Groq API key.
 
 ### Step 1: Install Dependencies
 Open your shell, navigate to this directory, and install dependencies (preferably in a virtual environment):
@@ -23,7 +23,7 @@ pip install -r requirements.txt
 
 ### Step 2: Configure Environment
 The file `.env` has been auto-generated for you with:
-*   `GROQ_API_KEY` (Copied from the voicebot)
+*   `GROQ_API_KEY` 
 *   `GROQ_MODEL=llama-3.3-70b-specdec`
 *   `SESSION_TTL_MINUTES=30`
 *   `REDIS_URL=` (Left blank to fall back to `InMemorySessionStore` for easy local testing).
