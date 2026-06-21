@@ -45,7 +45,7 @@ if settings.use_mock_llm or settings.llm_provider == "mock" or not settings.llm_
     from app.llm.mock_provider import MockLLMProvider
     llm_provider = MockLLMProvider()
     logger.info("Using MockLLMProvider for conversation loop (Local Dev/Demo mode).")
-elif settings.llm_provider == "groq":
+else:
     try:
         from app.llm.groq_provider import GroqProvider
         llm_provider = GroqProvider(api_key=settings.llm_api_key, model=settings.llm_model)
@@ -54,8 +54,6 @@ elif settings.llm_provider == "groq":
         logger.warning(f"Failed to initialize GroqProvider: {e}. Falling back to MockLLMProvider.")
         from app.llm.mock_provider import MockLLMProvider
         llm_provider = MockLLMProvider()
-else:
-    raise ValueError(f"Unsupported LLM provider: {settings.llm_provider}")
 
 tool_registry = ToolRegistry(specs_dir=specs_dir)
 tool_executor = ToolExecutor(api_base=settings.api_base)
@@ -72,6 +70,8 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str
     tenant_id: Optional[str] = "pb.amritsar"
+    prefill_fields: Optional[Dict[str, Any]] = None
+    workflow: Optional[str] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -111,9 +111,19 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
         # Load session state (either active or blank new one)
         session_state = await session_store.get(session_id)
 
+        # Autofill active workflow if explicitly passed
+        if request.workflow:
+            session_state.active_workflow = request.workflow
+
         # Autofill tenantId if not already present in collected variables
         if "tenantId" not in session_state.collected_fields:
             session_state.collected_fields["tenantId"] = request.tenant_id or "pb.amritsar"
+
+        # Apply prefilled profile fields from user login
+        if request.prefill_fields:
+            for k, v in request.prefill_fields.items():
+                if k not in session_state.collected_fields:
+                    session_state.collected_fields[k] = v
 
         # Execute conversation turn
         response_text, status = await orchestrator.run(

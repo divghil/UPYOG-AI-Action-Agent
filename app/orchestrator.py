@@ -43,9 +43,18 @@ class AgentOrchestrator:
             pending_tool = state.pending_mutating_tool
             tool_name = pending_tool["name"]
             
-            # Simple confirmation detection (covers English and Hindi)
-            is_confirmed = any(word in clean_msg for word in ["yes", "confirm", "proceed", "y", "haan", "theek"])
-            is_rejected = any(word in clean_msg for word in ["no", "cancel", "decline", "n", "nahi", "rehne"])
+            # Split message into words to avoid false positive substring matches (e.g., "y" matching in "my")
+            words_in_msg = clean_msg.split()
+            
+            # Match exact y/n or check if full confirmation words are present
+            is_confirmed = (
+                clean_msg in ["y", "yes", "confirm", "proceed", "haan", "theek"] or
+                any(word in words_in_msg for word in ["yes", "confirm", "proceed", "haan", "theek"])
+            )
+            is_rejected = (
+                clean_msg in ["n", "no", "cancel", "decline", "nahi", "rehne"] or
+                any(word in words_in_msg for word in ["no", "cancel", "decline", "nahi", "rehne"])
+            )
 
             if is_confirmed:
                 logger.info(f"User confirmed mutating tool: {tool_name}")
@@ -106,8 +115,38 @@ class AgentOrchestrator:
         while loop_count < max_loops:
             loop_count += 1
             
-            # Fetch Groq compatible function schemas
-            tools_schemas = self.tool_registry.get_all_tool_schemas_for_llm()
+            # Determine the next step in the workflow sequentially
+            completed_steps = []
+            for step in workflow_spec.steps:
+                step_executed = False
+                for msg in state.history:
+                    if msg.get("role") == "tool" and msg.get("name") == step:
+                        try:
+                            content = json.loads(msg.get("content", "{}"))
+                            if "error" not in content and "Errors" not in content:
+                                step_executed = True
+                                break
+                        except:
+                            step_executed = True
+                            break
+                if step_executed:
+                    completed_steps.append(step)
+                else:
+                    break  # Must complete steps in sequential order
+
+            # Determine the active step we are currently executing
+            active_step = None
+            for step in workflow_spec.steps:
+                if step not in completed_steps:
+                    active_step = step
+                    break
+
+            # Fetch Groq compatible function schemas restricted to the active step tool
+            tools_schemas = []
+            if active_step:
+                active_schema = self.tool_registry.get_tool_schema_for_llm(active_step)
+                if active_schema:
+                    tools_schemas.append(active_schema)
             
             # Build system prompt injecting workflow rules and gathered fields
             system_prompt = (

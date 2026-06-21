@@ -1,0 +1,35 @@
+tools:
+  searchCommunityHallSlots:
+    description: "Search for available community hall slots for a specific hall code and date range."
+    method: POST
+    url: "{API_BASE}/chb-services/booking/v1/_slot-search"
+    inputs:
+      tenantId:          { type: string, source: session }
+      communityHallCode: { type: string, ask: "Which community hall code would you like to book?" }
+      hallCode:          { type: string, ask: "Which hall category or code (e.g. HALL_A, HALL_B)?" }
+      bookingStartDate:  { type: string, ask: "From which date (YYYY-MM-DD)?" }
+      bookingEndDate:    { type: string, ask: "To which date (YYYY-MM-DD)?" }
+    returns: "JSON list of slots with availability status (AVAILABLE/BOOKED)"
+    mutating: false
+
+  createHallBooking:
+    description: "Submit a community hall booking application. Requires user details and dates."
+    method: POST
+    url: "{API_BASE}/chb-services/booking/v1/_create"
+    inputs:
+      tenantId:          { type: string, source: session }
+      communityHallCode: { type: string, ask: "Confirming the community hall code." }
+      hallCode:          { type: string, ask: "Confirming the hall category." }
+      bookingStartDate:  { type: string, ask: "Confirming the start date (YYYY-MM-DD)." }
+      bookingEndDate:    { type: string, ask: "Confirming the end date (YYYY-MM-DD)." }
+      applicantName:     { type: string, ask: "What is the applicant name?" }
+      applicantMobileNo: { type: string, ask: "What is the applicant mobile number?" }
+      applicantEmailId:  { type: string, ask: "What is the applicant email ID?" }
+    returns: "JSON object containing booking reference number and application status"
+    mutating: true
+
+workflow:
+  goal: "Book a community hall"
+  steps:
+    - searchCommunityHallSlots
+    - createHallBooking

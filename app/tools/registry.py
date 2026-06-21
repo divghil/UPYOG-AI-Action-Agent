@@ -46,6 +46,44 @@ class ToolRegistry:
         module_spec = self.modules.get(module_name)
         return module_spec.workflow if module_spec else None
 
+    def get_tool_schema_for_llm(self, tool_name: str) -> Optional[Dict[str, Any]]:
+        """Convert a single YAML tool specification into a tool call schema."""
+        tool_spec, _ = self.get_tool_spec(tool_name)
+        if not tool_spec:
+            return None
+            
+        properties = {}
+        required = []
+        
+        for param_name, input_spec in tool_spec.inputs.items():
+            if input_spec.source == "session":
+                continue
+            
+            schema_type = "string"
+            if input_spec.type in ("integer", "number"):
+                schema_type = "number"
+            elif input_spec.type == "boolean":
+                schema_type = "boolean"
+                
+            properties[param_name] = {
+                "type": schema_type,
+                "description": input_spec.ask or f"The {param_name} parameter."
+            }
+            required.append(param_name)
+            
+        return {
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "description": tool_spec.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required
+                }
+            }
+        }
+
     def get_all_tool_schemas_for_llm(self) -> List[Dict[str, Any]]:
         """Convert YAML tools specifications into Groq/OpenAI tool call schemas."""
         schemas = []

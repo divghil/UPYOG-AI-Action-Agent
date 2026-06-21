@@ -1,5 +1,6 @@
 import time
 import logging
+import random
 from typing import Dict, Any, Optional
 from app.tools.base import ToolSpec
 
@@ -19,7 +20,7 @@ class ToolExecutor:
         """
         Executes a tool call according to its specification.
         Injects session parameters (like tenantId) and citizen token,
-        performs audit logging, and handles local mock results for Phase 0.
+        performs audit logging, and handles local mock results for Phase 0/1.
         """
         # 1. Resolve inputs: autofill from session variables if source == session
         resolved_params = {}
@@ -38,7 +39,7 @@ class ToolExecutor:
             f"Mutating={tool_spec.mutating}"
         )
 
-        # 3. Phase 0 Mock Routing
+        # 3. Dynamic Mock Routing
         if tool_spec.name == "getDemoStatus":
             return {
                 "status": "ACTIVE",
@@ -58,6 +59,31 @@ class ToolExecutor:
                 "demoId": resolved_params.get("demoId"),
                 "tenantId": resolved_params.get("tenantId"),
                 "message": "This is a mock booking confirmation. No actual resources were reserved."
+            }
+
+        # Real/Mock Community Hall Booking (CHB) Service integrations
+        elif tool_spec.name == "searchCommunityHallSlots":
+            return {
+                "communityHallCode": resolved_params.get("communityHallCode"),
+                "hallCode": resolved_params.get("hallCode"),
+                "slots": [
+                    {
+                        "date": resolved_params.get("bookingStartDate"),
+                        "slotStatus": "AVAILABLE",
+                        "timeSlot": "09:00 AM - 09:00 PM"
+                    }
+                ],
+                "message": "The queried slot is available."
+            }
+
+        elif tool_spec.name == "createHallBooking":
+            booking_id = f"CHB-BOOK-{random.randint(100000, 999999)}"
+            return {
+                "bookingNo": booking_id,
+                "status": "BOOKING_CREATED",
+                "applicantName": resolved_params.get("applicantName"),
+                "bookingDate": resolved_params.get("bookingStartDate"),
+                "message": f"Community hall booking created successfully. Reference ID: {booking_id}."
             }
 
         # Generic mock fallback
