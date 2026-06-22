@@ -141,12 +141,19 @@ class AgentOrchestrator:
                     active_step = step
                     break
 
-            # Fetch Groq compatible function schemas restricted to the active step tool
+            # Fetch Groq compatible function schemas restricted to steps up to the active step
             tools_schemas = []
             if active_step:
-                active_schema = self.tool_registry.get_tool_schema_for_llm(active_step)
-                if active_schema:
-                    tools_schemas.append(active_schema)
+                try:
+                    active_idx = workflow_spec.steps.index(active_step)
+                    allowed_tools = workflow_spec.steps[:active_idx + 1]
+                except ValueError:
+                    allowed_tools = [active_step]
+                
+                for tool_name in allowed_tools:
+                    schema = self.tool_registry.get_tool_schema_for_llm(tool_name)
+                    if schema:
+                        tools_schemas.append(schema)
             
             # Build system prompt injecting workflow rules and gathered fields
             system_prompt = (

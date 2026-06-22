@@ -52,6 +52,28 @@ class GroqProvider(LLMProvider):
                         name=tc.function.name,
                         arguments=arguments
                     ))
+            
+            # Fallback: Parse XML-style function calls from text
+            if not tool_calls and text:
+                import re
+                import time
+                match = re.search(r"<function=(\w+)>(.*?)</function>", text, re.DOTALL)
+                if match:
+                    tool_name = match.group(1)
+                    args_str = match.group(2).strip()
+                    try:
+                        arguments = json.loads(args_str) if args_str else {}
+                    except Exception as e:
+                        logger.error(f"Failed to parse XML fallback arguments: {args_str}, error: {e}")
+                        arguments = {}
+                    
+                    tool_calls = [ToolCall(
+                        id=f"xml_fallback_{int(time.time())}",
+                        name=tool_name,
+                        arguments=arguments
+                    )]
+                    # Clean the XML tag out of the response text
+                    text = text.replace(match.group(0), "").strip()
                     
             return LLMResponse(text=text, tool_calls=tool_calls)
             
