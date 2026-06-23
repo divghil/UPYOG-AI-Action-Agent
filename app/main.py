@@ -115,8 +115,11 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
     Supports citizen authentication via authorization bearer header.
     """
     token = None
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.split(" ")[1]
+    if authorization:
+        if authorization.startswith("Bearer "):
+            token = authorization.split(" ")[1]
+        else:
+            token = authorization.strip()
 
     session_id = request.session_id
     logger.info(f"Incoming request for session: {session_id}")
