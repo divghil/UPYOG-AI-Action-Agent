@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     session_ttl_minutes: int = 30
     api_base: str = "https://niuatt.niua.in"
     use_mock_llm: bool = False
+    agent_memory_url: Optional[str] = None
+    agent_memory_store_id: Optional[str] = None
+    agent_memory_api_key: Optional[str] = None
 
     model_config = {
         "env_file": ".env",
@@ -42,5 +45,8 @@ except Exception as e:
         redis_url=os.environ.get("REDIS_URL"),
         session_ttl_minutes=int(os.environ.get("SESSION_TTL_MINUTES", "30")),
         api_base=os.environ.get("API_BASE", "https://niuatt.niua.in"),
-        use_mock_llm=os.environ.get("USE_MOCK_LLM", "false").lower() == "true"
+        use_mock_llm=os.environ.get("USE_MOCK_LLM", "false").lower() == "true",
+        agent_memory_url=os.environ.get("AGENT_MEMORY_URL"),
+        agent_memory_store_id=os.environ.get("AGENT_MEMORY_STORE_ID"),
+        agent_memory_api_key=os.environ.get("AGENT_MEMORY_API_KEY")
     )

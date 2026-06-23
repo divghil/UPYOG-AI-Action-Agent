@@ -13,11 +13,52 @@ class AgentOrchestrator:
         self, 
         llm_provider: LLMProvider, 
         tool_registry: ToolRegistry, 
-        tool_executor: ToolExecutor
+        tool_executor: ToolExecutor,
+        memory_client: Optional[Any] = None
     ):
         self.llm_provider = llm_provider
         self.tool_registry = tool_registry
         self.tool_executor = tool_executor
+        self.memory_client = memory_client
+
+    async def _execute_tool_and_handle_hooks(
+        self,
+        tool_spec: Any,
+        arguments: Dict[str, Any],
+        state: SessionState,
+        owner_id: str,
+        token: Optional[str] = None
+    ) -> Dict[str, Any]:
+        tool_result = await self.tool_executor.execute(
+            tool_spec, 
+            arguments, 
+            state.collected_fields, 
+            token
+        )
+        
+        # Post-execution hooks for long-term memory
+        if tool_spec.name == "createHallBooking" and tool_result.get("status") == "BOOKING_CREATED":
+            try:
+                booking_no = tool_result.get("bookingNo")
+                applicant = tool_result.get("applicantName") or state.collected_fields.get("applicantName", "Citizen")
+                booking_date = tool_result.get("bookingDate") or state.collected_fields.get("bookingStartDate", "")
+                hall_code = state.collected_fields.get("communityHallCode", "")
+                
+                fact_text = f"Citizen {applicant} successfully booked Community Hall {hall_code} (Booking No: {booking_no}) for date {booking_date}."
+                logger.info(f"Booking success detected. Creating long-term memory fact: '{fact_text}'")
+                
+                if self.memory_client:
+                    import uuid
+                    memory_id = f"booking-{booking_no}"
+                    await self.memory_client.create_long_term_memory(
+                        owner_id=owner_id,
+                        memory_id=memory_id,
+                        text=fact_text
+                    )
+            except Exception as e:
+                logger.error(f"Failed to record booking fact in long-term memory: {e}")
+                
+        return tool_result
 
     async def run(
         self, 
@@ -26,8 +67,42 @@ class AgentOrchestrator:
         token: Optional[str] = None
     ) -> Tuple[str, str]:
         """
-        Runs a single turn of the agent conversation loop.
-        Returns a tuple of (assistant_response_text, execution_status).
+        Wrapper to handle session memory logging and execute the turn inner logic.
+        """
+        owner_id = token or "citizen-guest"
+        
+        # 1. Log user message to session memory cloud
+        if self.memory_client:
+            await self.memory_client.add_session_event(
+                session_id=state.session_id,
+                actor_id=owner_id,
+                role="USER",
+                text=user_message
+            )
+            
+        # 2. Execute inner orchestrator logic
+        response_text, status = await self._run_inner(state, user_message, owner_id, token)
+        
+        # 3. Log assistant response to session memory cloud
+        if self.memory_client:
+            await self.memory_client.add_session_event(
+                session_id=state.session_id,
+                actor_id=owner_id,
+                role="ASSISTANT",
+                text=response_text
+            )
+            
+        return response_text, status
+
+    async def _run_inner(
+        self, 
+        state: SessionState, 
+        user_message: str, 
+        owner_id: str,
+        token: Optional[str] = None
+    ) -> Tuple[str, str]:
+        """
+        Runs the core tool-calling and LLM reasoning loop.
         """
         if not state.active_workflow:
             state.active_workflow = "demo"
@@ -66,11 +141,12 @@ class AgentOrchestrator:
                 if not tool_spec:
                     return f"Error: Tool '{tool_name}' no longer registered.", "error"
                 
-                # Execute the tool
-                tool_result = await self.tool_executor.execute(
+                # Execute the tool via helper
+                tool_result = await self._execute_tool_and_handle_hooks(
                     tool_spec, 
                     pending_tool["arguments"], 
-                    state.collected_fields, 
+                    state, 
+                    owner_id,
                     token
                 )
                 
@@ -155,12 +231,28 @@ class AgentOrchestrator:
                     if schema:
                         tools_schemas.append(schema)
             
-            # Build system prompt injecting workflow rules and gathered fields
+            # Fetch long-term memory facts for the citizen
+            lt_memories_text = ""
+            if self.memory_client:
+                try:
+                    memories = await self.memory_client.search_long_term_memory(
+                        owner_id=owner_id,
+                        query_text="past community hall bookings, citizen preferences, applicant details"
+                    )
+                    if memories:
+                        lt_memories_text = "\n\nPast Citizen Context & Preferences (Retrieved from Long-Term Memory):\n"
+                        for m in memories:
+                            lt_memories_text += f"- {m.get('text')}\n"
+                except Exception as e:
+                    logger.warning(f"Error fetching long-term memory in orchestrator: {e}")
+
+            # Build system prompt injecting workflow rules, gathered fields, and long-term memory context
             system_prompt = (
                 f"You are the Upyog AI Action-Agent. Your current goal is: '{workflow_spec.goal}'.\n\n"
                 f"You must guide the user step-by-step through these steps:\n"
                 f"{chr(10).join([f'- {step}' for step in workflow_spec.steps])}\n\n"
-                f"Current collected variables from the user: {state.collected_fields}\n\n"
+                f"Current collected variables from the user: {state.collected_fields}"
+                f"{lt_memories_text}\n\n"
                 f"STRICT RULES:\n"
                 f"1. Check if the next step in the workflow requires executing a tool.\n"
                 f"2. If all required arguments for a tool are in 'collected variables', call the tool immediately.\n"
@@ -222,11 +314,12 @@ class AgentOrchestrator:
                 # Update collected fields with parsed tool arguments
                 state.collected_fields.update(tc.arguments)
 
-                # Execute the tool
-                tool_result = await self.tool_executor.execute(
+                # Execute the tool via helper
+                tool_result = await self._execute_tool_and_handle_hooks(
                     tool_spec, 
                     tc.arguments, 
-                    state.collected_fields, 
+                    state, 
+                    owner_id,
                     token
                 )
 

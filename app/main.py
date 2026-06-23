@@ -57,12 +57,26 @@ else:
 
 tool_registry = ToolRegistry(specs_dir=specs_dir)
 tool_executor = ToolExecutor(api_base=settings.api_base)
+from app.session.memory_client import RedisAgentMemoryClient
+
+memory_client = None
+if settings.agent_memory_url and settings.agent_memory_store_id and settings.agent_memory_api_key:
+    try:
+        memory_client = RedisAgentMemoryClient(
+            api_url=settings.agent_memory_url,
+            store_id=settings.agent_memory_store_id,
+            api_key=settings.agent_memory_api_key
+        )
+    except Exception as e:
+        logger.warning(f"Failed to initialize RedisAgentMemoryClient: {e}")
+
 session_store = get_session_store(redis_url=settings.redis_url, ttl_minutes=settings.session_ttl_minutes)
 
 orchestrator = AgentOrchestrator(
     llm_provider=llm_provider,
     tool_registry=tool_registry,
-    tool_executor=tool_executor
+    tool_executor=tool_executor,
+    memory_client=memory_client
 )
 
 # Request/Response schemas
