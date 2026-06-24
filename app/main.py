@@ -86,6 +86,7 @@ class ChatRequest(BaseModel):
     tenant_id: Optional[str] = "pb.amritsar"
     prefill_fields: Optional[Dict[str, Any]] = None
     workflow: Optional[str] = None
+    token: Optional[str] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -112,10 +113,10 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
     """
     Main conversational agent endpoint.
     Retrieves state from store, executes orchestrator loop, and saves updated state.
-    Supports citizen authentication via authorization bearer header.
+    Supports citizen authentication via authorization bearer header or body token.
     """
-    token = None
-    if authorization:
+    token = request.token
+    if not token and authorization:
         if authorization.startswith("Bearer "):
             token = authorization.split(" ")[1]
         else:
