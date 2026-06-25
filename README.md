@@ -13,27 +13,31 @@ It demonstrates:
 
 ## 1. Setup Instructions
 
-The service is pre-configured to use the existing Groq API key.
+The service is pre-configured to use the existing Groq API key and supports Redis-based Agent Memory Cloud.
 
 ### Step 1: Install Dependencies
-Open your shell, navigate to this directory, and install dependencies (preferably in a virtual environment):
+Open your shell, navigate to this directory, create a virtual environment, and install the dependencies:
 ```bash
-pip install -r requirements.txt
+python -m venv venv
+.\venv\Scripts\activate      # On Windows
+source venv/bin/activate    # On Unix/macOS
+python -m pip install -r requirements.txt
 ```
 
 ### Step 2: Configure Environment
-The file `.env` has been auto-generated for you with:
-*   `GROQ_API_KEY` 
-*   `GROQ_MODEL=llama-3.3-70b-specdec`
+The file `.env` should be configured with the following properties:
+*   `GROQ_API_KEY`: Your Groq API key.
+*   `GROQ_MODEL=llama-3.3-70b-versatile`
 *   `SESSION_TTL_MINUTES=30`
-*   `REDIS_URL=` (Left blank to fall back to `InMemorySessionStore` for easy local testing).
-
-If you want to use Redis, simply supply your Redis connection string (e.g. `redis://localhost:6379/0`) to the `REDIS_URL` in `.env`.
+*   `REDIS_URL`: Supply your local Redis connection string (e.g. `redis://localhost:6379/0`) for session state caching, or leave blank to fall back to `InMemorySessionStore`.
+*   `AGENT_MEMORY_URL`: The Redis Agent Memory Cloud endpoint URL (for long-term memory and session events).
+*   `AGENT_MEMORY_STORE_ID`: The unique store ID for the Agent Memory Cloud.
+*   `AGENT_MEMORY_API_KEY`: The authorization API key for the Agent Memory Cloud.
 
 ### Step 3: Run the Server
-Start the Uvicorn server:
+Start the Uvicorn server using the Python module runner to prevent absolute path launcher issues:
 ```bash
-uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload
+.\venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload
 ```
 
 ---
