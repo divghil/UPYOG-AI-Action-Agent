@@ -123,7 +123,7 @@ class AgentOrchestrator:
             
             # Match exact y/n or check if full confirmation words are present
             is_confirmed = (
-                clean_msg in ["y", "yes", "confirm", "proceed", "haan", "theek"] or
+                clean_msg in ["y", "yes", "confirm", "proceed"] or
                 any(word in words_in_msg for word in ["yes", "confirm", "proceed", "haan", "theek"])
             )
             is_rejected = (
