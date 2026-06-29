@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import date
 from typing import Dict, Any, Optional, Tuple
 from app.llm.base import LLMProvider
 from app.tools.registry import ToolRegistry
@@ -69,7 +70,16 @@ class AgentOrchestrator:
         """
         Wrapper to handle session memory logging and execute the turn inner logic.
         """
-        owner_id = token or "citizen-guest"
+        # Resolve a stable owner_id for memory across all login methods.
+        # Priority: mobileNo (always same for a user, available in every login method)
+        #         > userUuid (only available with portal token login, changes per auth)
+        #         > token (transient, changes every login session)
+        owner_id = (
+            state.collected_fields.get("applicantMobileNo") or
+            state.collected_fields.get("userUuid") or
+            token or
+            "citizen-guest"
+        )
         
         # 1. Log user message to session memory cloud
         if self.memory_client:
@@ -183,6 +193,16 @@ class AgentOrchestrator:
         else:
             # Append new user message to conversation history
             state.history.append({"role": "user", "content": user_message})
+        
+        # Auto-detect tenantId updates from user messages (e.g. "pg.mohali is my city")
+        import re
+        tenant_match = re.search(r'\b(pg\.\w+|pb\.\w+)\b', user_message.lower())
+        if tenant_match:
+            new_tenant = tenant_match.group(1)
+            old_tenant = state.collected_fields.get("tenantId")
+            if new_tenant != old_tenant:
+                state.collected_fields["tenantId"] = new_tenant
+                logger.info(f"Updated tenantId from '{old_tenant}' to '{new_tenant}' based on user message")
 
         # 2. Core Tool Loop (Ask LLM -> Execute Non-Mutating Tools -> Repeat)
         loop_count = 0
@@ -247,8 +267,10 @@ class AgentOrchestrator:
                     logger.warning(f"Error fetching long-term memory in orchestrator: {e}")
 
             # Build system prompt injecting workflow rules, gathered fields, and long-term memory context
+            today_str = date.today().isoformat()
             system_prompt = (
-                f"You are the Upyog AI Action-Agent. Your current goal is: '{workflow_spec.goal}'.\n\n"
+                f"You are the Upyog AI Action-Agent. Your current goal is: '{workflow_spec.goal}'.\n"
+                f"Today's date is: {today_str}.\n\n"
                 f"You must guide the user step-by-step through these steps:\n"
                 f"{chr(10).join([f'- {step}' for step in workflow_spec.steps])}\n\n"
                 f"Current collected variables from the user: {state.collected_fields}"
@@ -259,6 +281,9 @@ class AgentOrchestrator:
                 f"3. DO NOT guess, mock, or hallucinate parameter values. If a tool requires arguments that are NOT "
                 f"present in the 'collected variables', ask the user to provide them.\n"
                 f"4. Once a tool has returned its execution result, explain the outcome to the user and proceed to the next step.\n"
+                f"5. If details (such as name, email, or mobile number) are available in the 'Past Citizen Context & Preferences' section, you may pre-fill or suggest them to the user. Ask the user for confirmation (e.g. 'I found your email as CBA@gmail.com, should I use that?') before proceeding to execute a mutating action if any parameter is pre-filled from long-term memory.\n"
+                f"6. ALWAYS use the exact dates the user provides. Convert them to YYYY-MM-DD format but NEVER change the year, month, or day. Today's date is {today_str} — use it as a reference for the current year.\n"
+                f"7. If a tool call returns an error from the real API, report it to the user honestly and ask them to correct the inputs. Do NOT present mock or fallback data as real results.\n"
             )
             
             messages = [{"role": "system", "content": system_prompt}]

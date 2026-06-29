@@ -75,7 +75,8 @@ class RedisAgentMemoryClient:
         url = f"{self.api_url}/v1/stores/{self.store_id}/long-term-memory/search"
         payload = {
             "text": query_text,
-            "ownerId": owner_id
+            "ownerId": owner_id,
+            "limit": 100
         }
         
         try:
@@ -84,8 +85,16 @@ class RedisAgentMemoryClient:
                 if res.status_code == 200:
                     data = res.json()
                     raw_items = data.get("items", [])
-                    # Client-side filter to enforce strict tenant separation and prevent memory contamination
-                    filtered = [item for item in raw_items if item.get("ownerId") == owner_id]
+                    # Client-side filter to enforce strict tenant separation and prevent memory contamination.
+                    # Allows manually saved LTMs (ownerId) and auto-summarized memories (where owner_id is inside session_id).
+                    filtered = []
+                    for item in raw_items:
+                        item_owner = item.get("ownerId")
+                        item_session = item.get("session_id") or item.get("sessionId")
+                        if item_owner == owner_id:
+                            filtered.append(item)
+                        elif item_session and owner_id in item_session:
+                            filtered.append(item)
                     logger.info(f"Retrieved {len(filtered)} long-term memories for owner: {owner_id} (out of {len(raw_items)} total matches)")
                     return filtered
                 else:
