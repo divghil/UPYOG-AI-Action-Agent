@@ -35,5 +35,8 @@ python app.py
 ### Step 4: Open and Test
 1.  Open the voice bot web application in your browser (e.g. `http://localhost:8090`).
 2.  Click **Advanced: Use Portal Auth Token** in the login modal.
-3.  Provide the `authToken` and the `userInfo` JSON payload.
+3.  Provide the `authToken`.
+    *   > [!TIP]
+    *   > **Link Phone Number for Memory**: You can enter your 10-digit phone number alongside the auth token. This ensures long-term memories are saved and retrieved under your stable mobile number owner ID.
+    *   > **Skip User JSON**: The **User Info JSON** block is optional and can be skipped.
 4.  Interact via text or voice. Start booking a community hall, cancel/confirm, or ask questions to verify the end-to-end integration!
